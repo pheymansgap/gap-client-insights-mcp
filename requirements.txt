@@ -1,4 +1,0 @@
-mcp[cli]==1.13.1
-python-dotenv
-ipykernel
-httpx
