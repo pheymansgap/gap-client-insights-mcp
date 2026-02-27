@@ -5,12 +5,14 @@ Provides company research tools via the Model Context Protocol (MCP):
   - Stock ticker lookup
   - Real-time stock performance data
   - Financial & general news retrieval
-  - AI-powered company analysis (Gemini)
+  - Company insights aggregation
   - Orchestrated company briefings
+
+The host LLM (e.g. GitHub Copilot) handles all reasoning and analysis
+over the raw data returned by these tools — no external LLM API needed.
 """
 
 import os
-import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from typing import Any, Dict
@@ -18,23 +20,13 @@ from urllib.parse import quote_plus
 
 import requests
 from dotenv import load_dotenv
-from google import genai
-from google.genai.errors import ClientError
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel
 
-load_dotenv()
-
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-
-_gemini_key = os.environ.get("GEMINI_API_KEY")
-if not _gemini_key:
-    raise RuntimeError("GEMINI_API_KEY is required. Add it to your .env file.")
-
-_gemini = genai.Client(api_key=_gemini_key)
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+# Always load .env from the project root (one level above this script),
+# regardless of the working directory VS Code uses to launch the server.
+_project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(_project_root, ".env"))
 
 # ---------------------------------------------------------------------------
 # Data models
@@ -74,22 +66,6 @@ def _require_env(name: str) -> str:
     if not val:
         raise ValueError(f"{name} is not set. Add it to your .env file.")
     return val
-
-
-def _generate(prompt: str) -> str:
-    """Call Gemini and return the generated text, retrying on rate limits."""
-    for attempt in range(4):
-        try:
-            response = _gemini.models.generate_content(
-                model=GEMINI_MODEL, contents=prompt
-            )
-            return response.text.strip()
-        except ClientError as e:
-            if "RESOURCE_EXHAUSTED" in str(e.status) and attempt < 3:
-                wait = 2 ** attempt * 15  # 15s, 30s, 60s
-                time.sleep(wait)
-            else:
-                raise
 
 
 # ---------------------------------------------------------------------------
@@ -323,8 +299,10 @@ def get_google_news(query: str) -> list[dict]:
 
 
 @mcp.tool()
-def summarize_company_insights(stock_data: dict, news_articles: list, company_name: str) -> dict:
-    """Generate an AI-powered analysis of a company's stock and news.
+def get_company_insights(stock_data: dict, news_articles: list, company_name: str) -> dict:
+    """Aggregate stock data and news into a structured insights bundle.
+
+    Returns raw data for the host LLM to analyze — no external AI call.
 
     Args:
         stock_data: Stock performance metrics dictionary.
@@ -332,43 +310,33 @@ def summarize_company_insights(stock_data: dict, news_articles: list, company_na
         company_name: Company being analyzed.
 
     Returns:
-        AI summary, key metrics, and structured insight data.
+        Structured company data with stock metrics, news, and derived signals.
     """
-    stock_ctx = (
-        f"Stock: {stock_data.get('symbol', 'N/A')}\n"
-        f"Price: ${stock_data.get('price', 0):.2f}\n"
-        f"Change: {stock_data.get('change_percent', 'N/A')}\n"
-        f"Day Range: ${stock_data.get('low', 0):.2f} - ${stock_data.get('high', 0):.2f}\n"
-        f"Volume: {stock_data.get('volume_millions', 0):.2f}M shares\n"
-        f"Trading Day: {stock_data.get('latest_trading_day', 'N/A')}"
-    )
-    news_ctx = "\n".join(
-        f"- {a.get('title', '')} ({a.get('source', '')})" for a in news_articles[:5]
-    )
-
-    prompt = (
-        f"You are a financial analyst. Analyze the following data for {company_name}:\n\n"
-        f"STOCK PERFORMANCE:\n{stock_ctx}\n\n"
-        f"RECENT NEWS:\n{news_ctx}\n\n"
-        "Provide a concise 3-4 sentence analysis covering:\n"
-        "1. Current stock performance and trading activity\n"
-        "2. Key themes from recent news\n"
-        "3. Brief outlook or considerations for investors\n\n"
-        "Be professional, factual, and balanced. No buy/sell recommendations."
-    )
-
     return {
-        "summary": _generate(prompt),
         "company": company_name,
         "stock_symbol": stock_data.get("symbol", "N/A"),
         "current_price": stock_data.get("price", 0),
+        "change": stock_data.get("change", 0),
         "change_percent": stock_data.get("change_percent", "N/A"),
-        "analysis_timestamp": datetime.now().isoformat(),
+        "open": stock_data.get("open", 0),
+        "high": stock_data.get("high", 0),
+        "low": stock_data.get("low", 0),
+        "previous_close": stock_data.get("previous_close", 0),
+        "volume_millions": stock_data.get("volume_millions", 0),
+        "day_range": stock_data.get("day_range", 0),
+        "day_range_percent": stock_data.get("day_range_percent", 0),
+        "price_vs_open_change": stock_data.get("price_vs_open_change", 0),
+        "latest_trading_day": stock_data.get("latest_trading_day", "N/A"),
+        "timestamp": datetime.now().isoformat(),
         "news_count": len(news_articles),
+        "news_articles": [
+            {"title": a.get("title", ""), "source": a.get("source", ""), "url": a.get("url", "")}
+            for a in news_articles[:10]
+        ],
         "key_metrics": {
             "price_movement": "positive" if stock_data.get("change", 0) > 0 else "negative",
-            "volume": stock_data.get("volume_millions", 0),
-            "volatility": stock_data.get("day_range_percent", 0),
+            "volume_millions": stock_data.get("volume_millions", 0),
+            "volatility_percent": stock_data.get("day_range_percent", 0),
         },
     }
 
@@ -391,7 +359,7 @@ def generate_company_briefing(company_name: str, stock_ticker: str) -> dict:
     sd = stock_result.data
 
     # --- News: cascade through sources until we have articles ----------
-    data_sources = ["Alpha Vantage", "Gemini"]
+    data_sources = ["Alpha Vantage"]
     news: list[dict] = []
 
     # 1. Financial news (premium domains via NewsAPI)
@@ -430,69 +398,96 @@ def generate_company_briefing(company_name: str, stock_ticker: str) -> dict:
     # Cap at 10 articles for the briefing
     news = news[:10]
 
-    analysis = summarize_company_insights(sd, news, company_name)
-
-    # --- Build formatted markdown briefing --------------------------------
-    price = sd.get("price", 0)
-    change = sd.get("change", 0)
-    change_pct = sd.get("change_percent", "N/A")
-    sign = "+" if change >= 0 else ""
-    day_range = f"${sd.get('low', 0):.2f} – ${sd.get('high', 0):.2f}"
-    vol = sd.get("volume_millions", 0)
-    trading_day = sd.get("latest_trading_day", "N/A")
-
-    news_lines = "\n".join(
-        f"{i}. [{a['title']}]({a['url']}) — {a['source']}"
-        for i, a in enumerate(news, 1)
-    )
-    if not news_lines:
-        news_lines = "_No recent news articles found._"
-
-    sources_str = ", ".join(data_sources)
-    summary_text = analysis.get("summary", "")
-
-    formatted_briefing = (
-        f"## {company_name} ({stock_ticker}) — Company Briefing\n\n"
-        f"### Stock Performance\n"
-        f"| Metric | Value |\n"
-        f"|---|---|\n"
-        f"| **Price** | ${price:.2f} |\n"
-        f"| **Change** | {sign}${change:.2f} ({change_pct}) |\n"
-        f"| **Day Range** | {day_range} |\n"
-        f"| **Volume** | {vol:.2f}M shares |\n"
-        f"| **Trading Day** | {trading_day} |\n\n"
-        f"### Recent News\n"
-        f"{news_lines}\n\n"
-        f"### Analysis\n"
-        f"{summary_text}\n\n"
-        f"---\n"
-        f"*Sources: {sources_str}*"
-    )
+    insights = get_company_insights(sd, news, company_name)
 
     return {
         "company": company_name,
         "ticker": stock_ticker,
         "generated_at": datetime.now().isoformat(),
-        "formatted_briefing": formatted_briefing,
         "stock_performance": {
             "symbol": sd.get("symbol"),
-            "price": price,
-            "change": change,
-            "change_percent": change_pct,
-            "day_range": f"${sd.get('low'):.2f} - ${sd.get('high'):.2f}",
-            "volume_millions": vol,
-            "latest_trading_day": trading_day,
+            "price": sd.get("price", 0),
+            "change": sd.get("change", 0),
+            "change_percent": sd.get("change_percent", "N/A"),
+            "day_range": f"${sd.get('low', 0):.2f} - ${sd.get('high', 0):.2f}",
+            "volume_millions": sd.get("volume_millions", 0),
+            "latest_trading_day": sd.get("latest_trading_day", "N/A"),
         },
         "news_headlines": news,
-        "ai_analysis": {
-            "summary": summary_text,
-            "key_metrics": analysis.get("key_metrics"),
-        },
+        "insights": insights,
         "metadata": {
             "news_articles_found": len(news),
             "data_sources": data_sources,
         },
+        "format_instructions": BRIEFING_FORMAT_TEMPLATE,
     }
+
+
+# ---------------------------------------------------------------------------
+# Output format template
+# ---------------------------------------------------------------------------
+
+BRIEFING_FORMAT_TEMPLATE = """
+Present the briefing using EXACTLY this structure. Do NOT skip or reorder sections.
+
+## {company} ({ticker}) — Company Briefing
+**Date:** {date}
+
+---
+
+### Stock Performance
+| Metric | Value |
+|--------|-------|
+| **Price** | ${price} |
+| **Change** | {change} ({change_percent}) |
+| **Day Range** | {day_range} |
+| **Open** | ${open} |
+| **Previous Close** | ${previous_close} |
+| **Volume** | {volume}M |
+| **Price vs Open** | {price_vs_open}% |
+| **Intraday Volatility** | {volatility}% |
+
+Write 2-3 sentences interpreting the stock data: trend direction, strength of move, volume context.
+
+---
+
+### Key News & Analyst Activity
+Group articles into themed subsections (e.g. "Analyst upgrades", "Market analysis", "Other").
+Each article MUST be a clickable markdown link in this format:
+- [Article Title](url) — Source Name
+
+---
+
+### Summary
+Write a 3-5 sentence synthesis covering:
+1. Overall market sentiment (bullish/bearish/neutral)
+2. Key catalysts or risks from the news
+3. Notable institutional or analyst activity
+4. Forward outlook
+
+**Data sources:** {sources} | **Articles found:** {count}
+"""
+
+
+# ---------------------------------------------------------------------------
+# Prompts
+# ---------------------------------------------------------------------------
+
+@mcp.prompt()
+def company_briefing_prompt(company_name: str, stock_ticker: str) -> str:
+    """Prompt template for generating a formatted company briefing.
+
+    Use this prompt, then call the generate_company_briefing tool with
+    the same company_name and stock_ticker to get the data.
+    """
+    return (
+        f"Generate a company intelligence briefing for {company_name} ({stock_ticker}). "
+        f"Call the generate_company_briefing tool with company_name='{company_name}' "
+        f"and stock_ticker='{stock_ticker}', then format the response following the "
+        f"format_instructions field in the tool result EXACTLY. "
+        f"Every news article MUST be a clickable markdown link. "
+        f"Do NOT skip any section. Do NOT reorder sections."
+    )
 
 
 # ---------------------------------------------------------------------------

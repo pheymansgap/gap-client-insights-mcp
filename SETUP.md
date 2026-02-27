@@ -18,7 +18,6 @@ uv sync
 |---------|-----|
 | Alpha Vantage | https://www.alphavantage.co/support/#api-key |
 | NewsAPI | https://newsapi.org/register |
-| Google Gemini | https://aistudio.google.com/app/apikey |
 
 ## 4. Configure Environment
 

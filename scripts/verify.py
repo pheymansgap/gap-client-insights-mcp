@@ -17,7 +17,6 @@ def main() -> int:
     # --- Packages ---
     print("Packages")
     for pkg, imp in [("mcp", "mcp"), ("requests", "requests"),
-                     ("google-genai", "google.genai"),
                      ("pydantic", "pydantic"), ("python-dotenv", "dotenv")]:
         try:
             __import__(imp)
@@ -29,28 +28,13 @@ def main() -> int:
     # --- API keys ---
     print("\nAPI keys")
     for key, label in [("ALPHA_VANTAGE_API_KEY", "Alpha Vantage"),
-                       ("NEWS_API_KEY", "NewsAPI"),
-                       ("GEMINI_API_KEY", "Gemini")]:
+                       ("NEWS_API_KEY", "NewsAPI")]:
         val = os.environ.get(key)
         if val and "your_" not in val:
             print(f"  + {label}")
         else:
             print(f"  - {label}  (set {key} in .env)")
             ok = False
-
-    # --- Gemini connectivity ---
-    print("\nGemini")
-    gemini_key = os.environ.get("GEMINI_API_KEY")
-    if gemini_key and "your_" not in gemini_key:
-        try:
-            from google import genai
-            genai.Client(api_key=gemini_key)
-            print("  + API configured")
-        except Exception as e:
-            print(f"  - Configuration error: {e}")
-            ok = False
-    else:
-        print("  - Skipped (no key)")
 
     # --- Server syntax ---
     print("\nServer")

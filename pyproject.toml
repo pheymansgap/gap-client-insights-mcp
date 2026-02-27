@@ -1,7 +1,7 @@
 [project]
 name = "client-intelligence-mcp"
 version = "1.0.0"
-description = "MCP server providing company intelligence — stock data, financial news, and Gemini-powered analysis"
+description = "MCP server providing company intelligence — stock data, financial news, and structured insights for LLM analysis"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -11,7 +11,6 @@ dependencies = [
     "mcp[cli]==1.13.1",
     "python-dotenv>=1.0.0",
     "requests>=2.31.0",
-    "google-genai>=1.0.0",
     "pydantic>=2.0.0",
 ]
 

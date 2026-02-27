@@ -1,6 +1,6 @@
 # Client Intelligence MCP Server
 
-An MCP server that provides company research tools for VS Code — stock data, financial news, and Gemini-powered analysis.
+An MCP server that provides company research tools for VS Code — stock data, financial news, and structured insights. The host LLM (GitHub Copilot) handles all reasoning and analysis over the raw data.
 
 ## Tools
 
@@ -10,7 +10,8 @@ An MCP server that provides company research tools for VS Code — stock data, f
 | `get_stock_performance` | Real-time price, change, volume, and range |
 | `get_financial_news` | Latest from Reuters, Bloomberg, WSJ, FT, CNBC |
 | `get_general_news` | Broader news coverage across all sources |
-| `summarize_company_insights` | AI analysis combining stock + news data |
+| `get_google_news` | News via Google News RSS (no API key needed) |
+| `get_company_insights` | Aggregated stock + news data for LLM analysis |
 | `generate_company_briefing` | Full orchestrated briefing in one call |
 
 ## Quick Start
@@ -45,7 +46,7 @@ In VS Code with GitHub Copilot Chat:
 |---------|-----------|---------|
 | Alpha Vantage | 25 req/day | https://www.alphavantage.co/support/#api-key |
 | NewsAPI | 100 req/day | https://newsapi.org/register |
-| Google Gemini | Generous free tier | https://aistudio.google.com/app/apikey |
+
 
 ## Project Structure
 
